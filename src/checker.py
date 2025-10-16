@@ -404,14 +404,16 @@ def check_availability(headless=False, timeout=30000, prevision=PREVISION_VALUE,
                         next_slot = find_next_slot(slots, target_doctor, max_days)
                         if next_slot:
                             message = f"Next slot for {target_doctor} within {max_days} days: {next_slot.get('hora')}"
-                            send_notification(message)
+                            if not suppress_notifications:
+                                send_notification(message)
                             notified = True
                     except Exception:
                         logging.exception("Error while checking target doctor next slot")
 
                 try:
                     if not notified:
-                        send_notification(message)
+                        if not suppress_notifications:
+                            send_notification(message)
                         notified = True
                 except Exception:
                     logging.exception("Failed to send notification")
@@ -433,7 +435,15 @@ def _parse_slot_datetime(hora_str):
     # expects 'dd/mm/YYYY HH:MM'
     try:
         from datetime import datetime
-        return datetime.strptime(hora_str, "%d/%m/%Y %H:%M")
+        # parse naive datetime from site
+        dt = datetime.strptime(hora_str, "%d/%m/%Y %H:%M")
+        # attach site timezone
+        try:
+            from zoneinfo import ZoneInfo
+            site_tz = os.getenv("SITE_TZ", "America/Santiago")
+            return dt.replace(tzinfo=ZoneInfo(site_tz))
+        except Exception:
+            return dt
     except Exception:
         return None
 
@@ -441,7 +451,13 @@ def _parse_slot_datetime(hora_str):
 def find_next_slot(slots, target_doctor, max_days=30):
     """Return the nearest slot for target_doctor within max_days, or None."""
     from datetime import datetime, timedelta
-    now = datetime.now()
+    # use site timezone when available
+    try:
+        from zoneinfo import ZoneInfo
+        site_tz = os.getenv("SITE_TZ", "America/Santiago")
+        now = datetime.now(ZoneInfo(site_tz))
+    except Exception:
+        now = datetime.now()
     cutoff = now + timedelta(days=max_days)
     candidates = []
     td_lower = target_doctor.lower()

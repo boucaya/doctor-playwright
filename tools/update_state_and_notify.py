@@ -90,6 +90,7 @@ def main():
     saved = state.get(target, {})
     prev_hora = saved.get("hora")
     paused = saved.get("paused", False)
+    paused_until = saved.get("paused_until")
     failures = int(saved.get("consecutive_failures", 0))
 
     new_hora = None
@@ -121,42 +122,92 @@ def main():
         # reset failures if we didn't detect a captcha in this run
         failures = 0
 
-    # If we are paused due to previous CAPTCHAs, skip notifications until manually resumed or failures drop
+    # If we are paused due to previous CAPTCHAs, check paused_until
     if paused:
-        logging.info("Monitoring paused for %s (paused flag set).", target)
-        # write back updated counters
-        saved.update({"hora": prev_hora, "consecutive_failures": failures, "paused": paused})
-        state[target] = saved
-        save_state(state_file, state)
-        return 0
+        from datetime import datetime
+        if paused_until:
+            try:
+                pu = datetime.fromisoformat(paused_until)
+                now = datetime.utcnow()
+                if now >= pu:
+                    # resume
+                    logging.info("Resuming monitoring for %s (paused_until expired)", target)
+                    paused = False
+                    paused_until = None
+                    failures = 0
+                    # send resume notification
+                    try:
+                        checker.send_notification(f"Monitor resumed for {target}")
+                    except Exception:
+                        logging.exception("Failed to send resume notification")
+                else:
+                    logging.info("Monitoring paused for %s until %s", target, paused_until)
+                    # persist unchanged and exit
+                    saved.update({"hora": prev_hora, "consecutive_failures": failures, "paused": paused, "paused_until": paused_until})
+                    state[target] = saved
+                    save_state(state_file, state)
+                    return 0
+            except Exception:
+                logging.exception("Failed parsing paused_until; keeping monitor paused")
+                saved.update({"hora": prev_hora, "consecutive_failures": failures, "paused": paused, "paused_until": paused_until})
+                state[target] = saved
+                save_state(state_file, state)
+                return 0
+        else:
+            logging.info("Monitoring paused for %s (paused flag set with no paused_until).", target)
+            saved.update({"hora": prev_hora, "consecutive_failures": failures, "paused": paused})
+            state[target] = saved
+            save_state(state_file, state)
+            return 0
 
     if new_dt and (not prev_dt or new_dt < prev_dt):
-        # send notification
-        msg = f"Slot freed for {target}: {new_hora}. Previously: {prev_hora}"
-        try:
-            checker.send_notification(msg)
-            logging.info("Sent notification for %s", target)
-        except Exception:
-            logging.exception("Failed to send notification via checker.send_notification")
-        # update state
-        state[target] = {"hora": new_hora, "raw": next_slot, "consecutive_failures": 0, "paused": False}
-        save_state(state_file, state)
+        # Determine if this is the first time we have a saved hora for this target
+        is_first_setup = not prev_hora
+        if is_first_setup:
+            # Informational startup email: show the current next slot but do not treat as "freed"
+            if new_hora:
+                startup_msg = f"Monitoring started for {target}. Current next slot: {new_hora}"
+            else:
+                startup_msg = f"Monitoring started for {target}. No slots currently available."
+            try:
+                checker.send_notification(startup_msg)
+                logging.info("Sent startup notification for %s", target)
+            except Exception:
+                logging.exception("Failed to send startup notification")
+            # initialize state but do not consider this a freed-slot notification
+            state[target] = {"hora": new_hora, "raw": next_slot, "consecutive_failures": 0, "paused": False}
+            save_state(state_file, state)
+        else:
+            # send notification only when an earlier slot appears compared to previously saved
+            msg = f"Slot freed for {target}: {new_hora}. Previously: {prev_hora}"
+            try:
+                checker.send_notification(msg)
+                logging.info("Sent notification for %s", target)
+            except Exception:
+                logging.exception("Failed to send notification via checker.send_notification")
+            # update state
+            state[target] = {"hora": new_hora, "raw": next_slot, "consecutive_failures": 0, "paused": False}
+            save_state(state_file, state)
     else:
         logging.info("No earlier slot for %s (found=%s saved=%s)", target, new_dt, prev_dt)
         # if captcha failures exceed threshold, pause and alert
         FAILURE_THRESHOLD = int(os.getenv("FAILURE_THRESHOLD", "3"))
         if failures >= FAILURE_THRESHOLD:
-            alert_msg = f"Monitor paused for {target}: detected {failures} consecutive submit failures/CAPTCHA. Please check the site or increase backoff."
+            from datetime import datetime, timedelta, timezone
+            pause_hours = int(os.getenv("PAUSE_DURATION_HOURS", "24"))
+            pu = (datetime.now(timezone.utc) + timedelta(hours=pause_hours)).isoformat()
+            alert_msg = f"Monitor paused for {target}: detected {failures} consecutive submit failures/CAPTCHA. Paused until {pu}. Please check the site or increase backoff."
             try:
                 checker.send_notification(alert_msg)
                 logging.info("Sent CAPTCHA alert for %s", target)
             except Exception:
                 logging.exception("Failed to send CAPTCHA alert")
             paused = True
+            paused_until = pu
         # persist counters and pause state
-        saved.update({"hora": prev_hora, "consecutive_failures": failures, "paused": paused})
-        state[target] = saved
-        save_state(state_file, state)
+    saved.update({"hora": prev_hora, "consecutive_failures": failures, "paused": paused, "paused_until": paused_until})
+    state[target] = saved
+    save_state(state_file, state)
 
     return 0
 
