@@ -250,11 +250,49 @@ def check_availability(headless=False, timeout=30000, prevision=PREVISION_VALUE,
 
             # If we filled the apellido_locator, try pressing Enter on it to submit
             try:
+                submitted = False
                 if 'apellido_locator' in locals() and apellido_locator is not None:
                     try:
                         apellido_locator.press("Enter")
+                        submitted = True
                     except Exception:
-                        logging.debug("Could not press Enter on apellido locator; continuing")
+                        logging.debug("Could not press Enter on apellido locator; will try alternate submit methods")
+                        try:
+                            apellido_locator.focus()
+                            page.keyboard.press("Enter")
+                            submitted = True
+                        except Exception:
+                            logging.debug("Could not focus/press Enter on apellido locator")
+
+                # If not submitted yet, try several common selectors and techniques
+                if not submitted:
+                    tried_selectors = ["#apellido", "input[placeholder*='Apellido']", "input[name*='apellido']"]
+                    for try_sel in tried_selectors:
+                        try:
+                            el = page.query_selector(try_sel)
+                            if el:
+                                try:
+                                    el.press("Enter")
+                                    submitted = True
+                                    break
+                                except Exception:
+                                    try:
+                                        el.focus()
+                                        page.keyboard.press("Enter")
+                                        submitted = True
+                                        break
+                                    except Exception:
+                                        continue
+                        except Exception:
+                            continue
+
+                # Final fallback: try to submit the first form on the page via JS
+                if not submitted:
+                    try:
+                        page.evaluate("() => { const f = document.querySelector('form'); if(f){ f.submit(); return true } return false }")
+                        submitted = True
+                    except Exception:
+                        logging.debug("Final JS form.submit() fallback failed")
             except Exception:
                 logging.debug("press Enter handling failed")
 
@@ -280,8 +318,8 @@ def check_availability(headless=False, timeout=30000, prevision=PREVISION_VALUE,
 
             time.sleep(1)
 
-            # determine selector (CLI arg > ENV > default)
-            sel = selector or SLOT_SELECTOR_DEFAULT
+            # determine selector (CLI arg > ENV > default). Ensure it's never empty.
+            sel = selector if selector else (SLOT_SELECTOR_DEFAULT or "table.table tbody tr")
 
             # wait for container or selector if possible
             try:

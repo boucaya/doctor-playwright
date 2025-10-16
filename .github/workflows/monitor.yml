@@ -46,8 +46,14 @@ jobs:
           SLOT_SELECTOR: ${{ secrets.SLOT_SELECTOR }}
         run: |
           mkdir -p artifacts
-          # Run the checker once in headless mode and save slots JSON
-          python -m src.checker --headless --doctor "${{ secrets.DOCTOR_LAST_NAME }}" --output-json --selector "${{ secrets.SLOT_SELECTOR }}" --prevision "${{ secrets.PREVISION_VALUE }}" --target-doctor "${{ secrets.TARGET_DOCTOR }}" --max-days "${{ secrets.MAX_DAYS }}"
+          set -euo pipefail
+          # Build command and only include --selector if SLOT_SELECTOR is non-empty
+          CMD=(python -m src.checker --headless --doctor "${DOCTOR_LAST_NAME}" --output-json --prevision "${PREVISION_VALUE}" --target-doctor "${TARGET_DOCTOR}" --max-days "${MAX_DAYS}")
+          if [ -n "${SLOT_SELECTOR:-}" ]; then
+            CMD+=(--selector "${SLOT_SELECTOR}")
+          fi
+          echo "Running: ${CMD[*]}"
+          "${CMD[@]}"
 
       - name: Update state and prepare commit
         env:
