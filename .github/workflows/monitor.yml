@@ -21,6 +21,38 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Add random jitter
+        run: |
+          # random sleep up to 60s to disperse requests and avoid pattern detection
+          SLEEP=$(( RANDOM % 60 ))
+          echo "Sleeping ${SLEEP}s to add jitter"
+          sleep $SLEEP
+
+      - name: Restore previous state.json from last artifact
+        env:
+          REPO: ${{ github.repository }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "Looking for latest checker-artifacts artifact..."
+          # List artifacts and find the latest artifact id for 'checker-artifacts'
+          ARTIFACT_ID=$(curl -s -H "Authorization: Bearer ${TOKEN}" "https://api.github.com/repos/${REPO}/actions/artifacts?per_page=50" \
+            | jq -r '.artifacts[] | select(.name=="checker-artifacts") | .id' | head -n1)
+          if [ -n "${ARTIFACT_ID}" ]; then
+            echo "Found artifact id ${ARTIFACT_ID}, downloading..."
+            curl -s -H "Authorization: Bearer ${TOKEN}" -L "https://api.github.com/repos/${REPO}/actions/artifacts/${ARTIFACT_ID}/zip" -o artifact.zip
+            unzip -o artifact.zip -d artifact_prev || true
+            if [ -f artifact_prev/artifacts/state.json ]; then
+              mkdir -p artifacts
+              cp artifact_prev/artifacts/state.json artifacts/state.json
+              echo "Restored artifacts/state.json"
+            else
+              echo "No state.json inside artifact"
+            fi
+          else
+            echo "No previous checker-artifacts artifact found"
+          fi
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
