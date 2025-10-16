@@ -127,6 +127,9 @@ def check_availability(headless=False, timeout=30000, prevision=PREVISION_VALUE,
     """
     # keep a live reference for tests that assert on the function attribute
     check_availability.send_notification = send_notification
+    # If output_json is requested, run silently (no outgoing notifications);
+    # the external helper will read the JSON and decide whether to notify.
+    suppress_notifications = bool(output_json)
 
     # If a driver (selenium-like) is provided, use it (tests patch this)
     if driver is not None:
@@ -138,6 +141,7 @@ def check_availability(headless=False, timeout=30000, prevision=PREVISION_VALUE,
         return "No available hours."
 
     logging.info("Running Playwright flow (headless=%s) for %s", headless, doctor)
+    notified = False
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=headless)
@@ -393,7 +397,7 @@ def check_availability(headless=False, timeout=30000, prevision=PREVISION_VALUE,
                 # If a target doctor is requested via env or CLI, try to find their next slot
                 target_doctor = os.getenv("TARGET_DOCTOR")
                 # the function caller may override via passing doctor param; keep a separate target
-                if target_doctor:
+                if target_doctor and not notified:
                     try:
                         # default max days
                         max_days = int(os.getenv("MAX_DAYS", "30"))
@@ -401,11 +405,14 @@ def check_availability(headless=False, timeout=30000, prevision=PREVISION_VALUE,
                         if next_slot:
                             message = f"Next slot for {target_doctor} within {max_days} days: {next_slot.get('hora')}"
                             send_notification(message)
+                            notified = True
                     except Exception:
                         logging.exception("Error while checking target doctor next slot")
 
                 try:
-                    send_notification(message)
+                    if not notified:
+                        send_notification(message)
+                        notified = True
                 except Exception:
                     logging.exception("Failed to send notification")
                 browser.close()

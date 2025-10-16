@@ -86,8 +86,12 @@ def main():
     next_slot = checker.find_next_slot(slots, target, int(os.getenv("MAX_DAYS", "30")))
     state = load_state(state_file)
 
-    saved = state.get(target)
-    prev_hora = saved.get("hora") if saved else None
+    # setup target entry
+    saved = state.get(target, {})
+    prev_hora = saved.get("hora")
+    paused = saved.get("paused", False)
+    failures = int(saved.get("consecutive_failures", 0))
+
     new_hora = None
     if next_slot:
         new_hora = next_slot.get("HORA") or next_slot.get("hora") or next_slot.get("PROXIMA")
@@ -98,6 +102,34 @@ def main():
     prev_dt = parse_dt(prev_hora)
     new_dt = parse_dt(new_hora)
 
+    # Detect submit_failure / captcha artifacts: if the artifacts dir contains submit_failure files
+    captcha_detected = False
+    try:
+        import glob
+
+        fails = glob.glob(os.path.join(args.artifacts, "submit_failure_*.html"))
+        if fails:
+            captcha_detected = True
+    except Exception:
+        pass
+
+    # Update failure counters
+    if captcha_detected:
+        failures += 1
+        logging.info("Detected submit failure/CAPTCHA in artifacts; incrementing failure count to %s", failures)
+    else:
+        # reset failures if we didn't detect a captcha in this run
+        failures = 0
+
+    # If we are paused due to previous CAPTCHAs, skip notifications until manually resumed or failures drop
+    if paused:
+        logging.info("Monitoring paused for %s (paused flag set).", target)
+        # write back updated counters
+        saved.update({"hora": prev_hora, "consecutive_failures": failures, "paused": paused})
+        state[target] = saved
+        save_state(state_file, state)
+        return 0
+
     if new_dt and (not prev_dt or new_dt < prev_dt):
         # send notification
         msg = f"Slot freed for {target}: {new_hora}. Previously: {prev_hora}"
@@ -106,10 +138,25 @@ def main():
             logging.info("Sent notification for %s", target)
         except Exception:
             logging.exception("Failed to send notification via checker.send_notification")
-        state[target] = {"hora": new_hora, "raw": next_slot}
+        # update state
+        state[target] = {"hora": new_hora, "raw": next_slot, "consecutive_failures": 0, "paused": False}
         save_state(state_file, state)
     else:
         logging.info("No earlier slot for %s (found=%s saved=%s)", target, new_dt, prev_dt)
+        # if captcha failures exceed threshold, pause and alert
+        FAILURE_THRESHOLD = int(os.getenv("FAILURE_THRESHOLD", "3"))
+        if failures >= FAILURE_THRESHOLD:
+            alert_msg = f"Monitor paused for {target}: detected {failures} consecutive submit failures/CAPTCHA. Please check the site or increase backoff."
+            try:
+                checker.send_notification(alert_msg)
+                logging.info("Sent CAPTCHA alert for %s", target)
+            except Exception:
+                logging.exception("Failed to send CAPTCHA alert")
+            paused = True
+        # persist counters and pause state
+        saved.update({"hora": prev_hora, "consecutive_failures": failures, "paused": paused})
+        state[target] = saved
+        save_state(state_file, state)
 
     return 0
 
