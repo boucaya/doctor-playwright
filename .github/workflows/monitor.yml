@@ -42,10 +42,15 @@ jobs:
             echo "Found artifact id ${ARTIFACT_ID}, downloading..."
             curl -s -H "Authorization: Bearer ${TOKEN}" -L "https://api.github.com/repos/${REPO}/actions/artifacts/${ARTIFACT_ID}/zip" -o artifact.zip
             unzip -o artifact.zip -d artifact_prev || true
+            # artifact layout changed over time; accept state.json at root or under artifacts/
             if [ -f artifact_prev/artifacts/state.json ]; then
               mkdir -p artifacts
               cp artifact_prev/artifacts/state.json artifacts/state.json
-              echo "Restored artifacts/state.json"
+              echo "Restored artifacts/state.json from artifact_prev/artifacts/state.json"
+            elif [ -f artifact_prev/state.json ]; then
+              mkdir -p artifacts
+              cp artifact_prev/state.json artifacts/state.json
+              echo "Restored artifacts/state.json from artifact_prev/state.json"
             else
               echo "No state.json inside artifact"
             fi
