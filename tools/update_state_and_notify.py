@@ -164,23 +164,9 @@ def main():
         # Determine if this is the first time we have a saved hora for this target
         is_first_setup = not prev_hora
         if is_first_setup:
-            # By default do NOT send a startup informational email (it caused repeated emails
-            # when rehydration failed). If you explicitly want the startup email, set
-            # SEND_STARTUP_NOTIFICATION=1 in the environment.
-            send_startup = os.getenv("SEND_STARTUP_NOTIFICATION", "0") == "1"
-            if new_hora:
-                startup_msg = f"Monitoring started for {target}. Current next slot: {new_hora}"
-            else:
-                startup_msg = f"Monitoring started for {target}. No slots currently available."
-            if send_startup:
-                try:
-                    checker.send_notification(startup_msg)
-                    logging.info("Sent startup notification for %s", target)
-                except Exception:
-                    logging.exception("Failed to send startup notification")
-            else:
-                logging.info("Startup notification suppressed for %s (SEND_STARTUP_NOTIFICATION not set)", target)
-            # initialize state but do not consider this a freed-slot notification
+            # Do not send a startup informational email. Initialize state to the
+            # current discovered slot so subsequent runs compare against it.
+            logging.info("First run for %s: initializing state with %s (startup email suppressed)", target, new_hora)
             state[target] = {"hora": new_hora, "raw": next_slot, "consecutive_failures": 0, "paused": False}
             save_state(state_file, state)
         else:
