@@ -48,8 +48,15 @@ def load_state(path):
 def save_state(path, data):
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as fh:
+        # Write atomically: write to a temp file then replace
+        tmp_path = f"{path}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as fh:
             json.dump(data, fh, ensure_ascii=False, indent=2)
+            fh.flush()
+            os.fsync(fh.fileno())
+        # atomic replace
+        os.replace(tmp_path, path)
+        logging.info("Saved state file to %s (entries=%s)", path, list(data.keys()))
     except Exception:
         logging.exception("Failed to save state file")
 
@@ -197,7 +204,11 @@ def main():
             paused = True
             paused_until = pu
         # persist counters and pause state
-    saved.update({"hora": prev_hora, "consecutive_failures": failures, "paused": paused, "paused_until": paused_until})
+    # Persist the effective hora value: prefer the entry we just wrote to state[target]
+    # (this avoids overwriting a newly-initialized hora with the previous None).
+    current_entry = state.get(target, {})
+    current_hora = current_entry.get("hora", prev_hora)
+    saved.update({"hora": current_hora, "consecutive_failures": failures, "paused": paused, "paused_until": paused_until})
     state[target] = saved
     save_state(state_file, state)
 
