@@ -1,0 +1,73 @@
+name: Doctor availability monitor
+
+on:
+  schedule:
+    # every 6 hours (example) - adjust as desired
+    - cron: '0 */6 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # allow pushing back state.json using the automatically-provided GITHUB_TOKEN
+          persist-credentials: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # ensure Playwright is installed and browsers are available
+          pip install playwright
+          npx playwright install --with-deps
+
+      - name: Run checker (single-run)
+        env:
+          # Map secrets to env variables read by src.checker
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          TARGET_DOCTOR: ${{ secrets.TARGET_DOCTOR }}
+          MAX_DAYS: ${{ secrets.MAX_DAYS }}
+          CHECKER_URL: ${{ secrets.CHECKER_URL }}
+          DOCTOR_LAST_NAME: ${{ secrets.DOCTOR_LAST_NAME }}
+          PREVISION_VALUE: ${{ secrets.PREVISION_VALUE }}
+          SLOT_SELECTOR: ${{ secrets.SLOT_SELECTOR }}
+        run: |
+          mkdir -p artifacts
+          # Run the checker once in headless mode and save slots JSON
+          python -m src.checker --headless --doctor "${{ secrets.DOCTOR_LAST_NAME }}" --output-json --selector "${{ secrets.SLOT_SELECTOR }}" --prevision "${{ secrets.PREVISION_VALUE }}" --target-doctor "${{ secrets.TARGET_DOCTOR }}" --max-days "${{ secrets.MAX_DAYS }}"
+
+      - name: Update state and prepare commit
+        env:
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          TARGET_DOCTOR: ${{ secrets.TARGET_DOCTOR }}
+          MAX_DAYS: ${{ secrets.MAX_DAYS }}
+        run: |
+          python tools/update_state_and_notify.py --artifacts ./artifacts --state-file ./artifacts/state.json
+
+      - name: Commit artifacts/state.json if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add artifacts/state.json || true
+          if ! git diff --quiet --cached; then
+            git commit -m "Update monitor state [skip ci]" || echo "nothing to commit"
+            git push
+          else
+            echo "No state changes"
+          fi

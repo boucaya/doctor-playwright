@@ -1,0 +1,6 @@
+playwright
+pytest
+requests
+asyncio
+python-dotenv
+pytest-mock
