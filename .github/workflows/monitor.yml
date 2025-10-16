@@ -25,9 +25,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          # ensure Playwright is installed and browsers are available
+          # ensure Playwright Python package is installed
           pip install playwright
-          npx playwright install --with-deps
+          # install Playwright browsers and system dependencies using the Python entrypoint
+          python -m playwright install --with-deps
 
       - name: Run checker (single-run)
         env:
