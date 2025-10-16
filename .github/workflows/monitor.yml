@@ -2,8 +2,8 @@ name: Doctor availability monitor
 
 on:
   schedule:
-    # every 6 hours (example) - adjust as desired
-    - cron: '0 */6 * * *'
+    # every 30 minutes
+    - cron: '*/30 * * * *'
   workflow_dispatch: {}
 
 jobs:
@@ -67,14 +67,12 @@ jobs:
         run: |
           python tools/update_state_and_notify.py --artifacts ./artifacts --state-file ./artifacts/state.json
 
-      - name: Commit artifacts/state.json if changed
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add artifacts/state.json || true
-          if ! git diff --quiet --cached; then
-            git commit -m "Update monitor state [skip ci]" || echo "nothing to commit"
-            git push
-          else
-            echo "No state changes"
-          fi
+      - name: Upload artifacts (state + debug files)
+        uses: actions/upload-artifact@v4
+        with:
+          name: checker-artifacts
+          path: |
+            ./artifacts/state.json
+            ./artifacts/slots_*.json
+            ./artifacts/*.html
+            ./artifacts/*.png
